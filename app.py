@@ -14,11 +14,12 @@ import numpy as np
 import torch
 import streamlit as st
 import plotly.graph_objects as go
+import plotly.express as px
 from scipy.optimize import minimize
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models.pinn import ExtrusionPINN
-from utils.preprocessing import ALLOY_FEATURES
+from utils.preprocessing import ALLOY_FEATURES, load_and_split
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -33,6 +34,31 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # Load model and scalers (cached — loads once per session)
 # ---------------------------------------------------------------------------
+
+@st.cache_data
+def load_test_predictions():
+    """Run model on test split and return actual vs predicted arrays."""
+    _, scalers, splits = load_and_split(
+        os.path.join("data", "extrusion_mock_data.csv")
+    )
+    with open(os.path.join("checkpoints", "scalers.pkl"), "rb") as f:
+        sc = pickle.load(f)
+
+    model = ExtrusionPINN(input_dim=13, hidden_dim=128, n_layers=6, output_dim=4)
+    model.load_state_dict(
+        torch.load(os.path.join("checkpoints", "best_model.pt"),
+                   map_location="cpu", weights_only=True)
+    )
+    model.eval()
+
+    X_test, y_test = splits["test"]
+    X_norm = sc["X"].transform(X_test)
+    with torch.no_grad():
+        y_pred_norm = model(torch.tensor(X_norm, dtype=torch.float32)).numpy()
+    y_pred = sc["y"].inverse_transform(y_pred_norm)
+
+    return y_test, y_pred
+
 
 @st.cache_resource
 def load_model_and_scalers():
@@ -209,7 +235,7 @@ def main():
         st.error("Model not found. Run  `python train.py`  first, then restart the app.")
         st.stop()
 
-    tab1, tab2 = st.tabs(["🔍  Forward Prediction", "🎯  Inverse Optimiser"])
+    tab1, tab2, tab3 = st.tabs(["🔍  Forward Prediction", "🎯  Inverse Optimiser", "📊  Model Accuracy"])
 
     # -----------------------------------------------------------------------
     # TAB 1 — FORWARD PREDICTION
@@ -264,7 +290,7 @@ def main():
             )
 
             st.plotly_chart(quality_gauge(preds["surface_quality_score"]),
-                            use_container_width=True)
+                            use_container_width=True, key="fwd_gauge")
 
         st.divider()
         st.markdown("**Process Flow**")
@@ -346,13 +372,100 @@ def main():
 
                 st.plotly_chart(
                     quality_gauge(final_preds["surface_quality_score"]),
-                    use_container_width=True,
+                    use_container_width=True, key="inv_gauge",
                 )
             else:
                 st.info(
                     "Set your target values on the left and click  "
                     "**Find Optimal Setpoints**."
                 )
+
+
+    # -----------------------------------------------------------------------
+    # TAB 3 — MODEL ACCURACY
+    # -----------------------------------------------------------------------
+    with tab3:
+        st.markdown("### How accurate is the model?")
+        st.caption("Evaluated on the held-out test set — data the model never saw during training.")
+
+        y_test, y_pred = load_test_predictions()
+
+        OUTPUT_META = [
+            {"name": "Exit Temperature",  "col": 0, "unit": "°C",     "good_err": 5},
+            {"name": "Ram Pressure",       "col": 1, "unit": "MPa",    "good_err": 5},
+            {"name": "Exit Speed",         "col": 2, "unit": "mm/s",   "good_err": 5},
+            {"name": "Surface Quality",    "col": 3, "unit": "/ 100",  "good_err": 3},
+        ]
+
+        # --- Summary metrics row ---
+        st.markdown("**Prediction Error (Mean Absolute Error)**")
+        cols_m = st.columns(4)
+        for meta, col_m in zip(OUTPUT_META, cols_m):
+            i   = meta["col"]
+            mae = float(np.mean(np.abs(y_pred[:, i] - y_test[:, i])))
+            col_m.metric(
+                meta["name"],
+                f"± {mae:.2f} {meta['unit']}",
+                "✅ Good" if mae <= meta["good_err"] else "⚠️ Review",
+            )
+
+        st.divider()
+
+        # --- Parity plots (predicted vs actual) ---
+        st.markdown("**Parity Plots — Predicted vs Actual**")
+        st.caption("Points should lie along the diagonal. The closer to the line, the better.")
+
+        p1, p2 = st.columns(2)
+        p3, p4 = st.columns(2)
+
+        plot_cols = [p1, p2, p3, p4]
+        for meta, pcol in zip(OUTPUT_META, plot_cols):
+            i      = meta["col"]
+            actual = y_test[:, i]
+            pred   = y_pred[:, i]
+            lo     = min(actual.min(), pred.min())
+            hi     = max(actual.max(), pred.max())
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=actual, y=pred,
+                mode="markers",
+                marker=dict(size=4, opacity=0.5, color="#1f77b4"),
+                name="Test samples",
+            ))
+            fig.add_trace(go.Scatter(
+                x=[lo, hi], y=[lo, hi],
+                mode="lines",
+                line=dict(color="red", dash="dash", width=2),
+                name="Perfect prediction",
+            ))
+            fig.update_layout(
+                title=meta["name"],
+                xaxis_title=f"Actual ({meta['unit']})",
+                yaxis_title=f"Predicted ({meta['unit']})",
+                height=320,
+                margin=dict(t=40, b=40, l=40, r=20),
+                showlegend=False,
+            )
+            pcol.plotly_chart(fig, use_container_width=True, key=f"parity_{meta['col']}")
+
+        st.divider()
+
+        # --- Error distribution ---
+        st.markdown("**Error Distribution — Exit Temperature**")
+        st.caption("Shows how often the model is within a given error band.")
+
+        errors = y_pred[:, 0] - y_test[:, 0]
+        fig_hist = px.histogram(
+            x=errors, nbins=40,
+            labels={"x": "Prediction Error (°C)", "y": "Count"},
+            color_discrete_sequence=["#1f77b4"],
+        )
+        fig_hist.add_vline(x=0,  line_dash="dash", line_color="red",   annotation_text="Zero error")
+        fig_hist.add_vline(x=2,  line_dash="dot",  line_color="orange", annotation_text="+2°C")
+        fig_hist.add_vline(x=-2, line_dash="dot",  line_color="orange")
+        fig_hist.update_layout(height=300, margin=dict(t=20, b=40, l=40, r=20))
+        st.plotly_chart(fig_hist, use_container_width=True, key="err_hist")
 
 
 if __name__ == "__main__":
