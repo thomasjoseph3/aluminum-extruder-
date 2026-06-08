@@ -25,7 +25,7 @@ Get them wrong and the profile comes out with surface defects, wrong dimensions,
 
 > *"If I use these settings, what will I get?"* — Forward Prediction
 
-> *"I want exit temperature 510°C and quality score above 80 — what settings should I use?"* — Inverse Optimiser
+> *"I want exit temperature 495°C and quality score above 80 — what settings should I use?"* — Inverse Optimiser
 
 ---
 
@@ -69,7 +69,7 @@ The alloy grade is automatically converted to 7 material property numbers (densi
 | Exit temperature | 430 – 580 | °C | Must hit quench window for correct aging |
 | Ram pressure | 50 – 700 | MPa | Must stay below press limit |
 | Exit speed | 10 – 400 | mm/s | Too fast causes surface defects |
-| Surface quality score | 0 – 100 | — | Overall process health indicator |
+| Surface quality score | 0 – 100 | — | Overall process health indicator (computed analytically from exit temperature and exit speed — not predicted by the neural network) |
 
 ---
 
@@ -299,30 +299,31 @@ Checkpoints are saved to `checkpoints/best_model.pt` and `checkpoints/scalers.pk
 
 ## The App
 
-### Tab 1 — Forward Prediction
-Move the sliders to set process parameters. Predictions update **live** in real-time.
+### Sidebar
+Always visible. Shows model architecture summary, accuracy numbers, supported alloys, and a quick how-to guide for each tab.
 
-- 4 output metrics with ✅ / ⚠️ / 🔴 status indicators
-- Surface quality gauge chart (0–100, colour coded)
-- Process flow diagram showing the full extrusion path
+### Tab 1 — Forward Prediction
+Move the sliders to set process parameters. Predictions update **live** in real-time — no button needed.
+
+- **Colour-coded metric cards** — green (good), orange (warning), red (out of range) for each output
+- **Surface quality gauge** — 0–100, colour-banded, updates live
+- **Process flow diagram** — arrow-connected stages from billet → container → die → ram → profile out
 
 ### Tab 2 — Inverse Optimiser
 Enter the output you want to achieve:
+- Alloy grade, billet diameter, extrusion ratio
 - Target exit temperature
-- Minimum quality score
+- Target quality score
 
-Click **Find Optimal Setpoints** — the optimiser searches the input space and returns:
-- Recommended billet temperature
-- Recommended container temperature
-- Recommended die temperature
-- Recommended ram speed
-- Predicted outputs with those setpoints
+Click **Find Optimal Setpoints** — the optimiser runs L-BFGS-B from 3 starting points and returns:
+- Recommended billet temperature, container temperature, die temperature, ram speed (styled as a recommendation panel)
+- Predicted result with those setpoints shown immediately below
 
 ### Tab 3 — Model Accuracy
 Shows how well the model performs on test data it never saw during training:
-- MAE for each output in real engineering units
-- Parity plots (predicted vs actual — points should sit on the diagonal)
-- Error distribution histogram for exit temperature
+- Mean Absolute Error for each output in real engineering units (colour-coded cards)
+- 4 parity plots (predicted vs actual — points should lie on the diagonal)
+- Error distribution histogram for exit temperature with ±2°C band marked
 
 ---
 
@@ -379,7 +380,7 @@ aluminium-extruder/
 | Limitation | Impact | Path to Fix |
 |------------|--------|-------------|
 | Trained on simulated data, not real machine data | Predictions are physically consistent but not validated against a real press | Collect real sensor logs and fine-tune the model |
-| Surface quality is a heuristic, not derived from metallurgy | Quality score is indicative only | Replace with a published Hot Tearing Criterion once real data is available |
+| Surface quality is a heuristic, not derived from metallurgy | Quality score is indicative only — based on exit temperature window and exit speed, not grain structure or surface roughness | Replace with a published Hot Tearing Criterion or real quality measurements once plant data is available |
 | Sensor drift, spike noise, and missing data not modelled | Real sensors are noisier than the simulation assumes | Add realistic fault injection to the data generator |
 | Only 3 alloys supported | Cannot predict for other grades | Add material constants from literature for additional alloys |
 | No confidence intervals | Model gives a point prediction with no uncertainty range | Add Bayesian or ensemble uncertainty quantification |
