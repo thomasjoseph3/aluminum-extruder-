@@ -132,11 +132,12 @@ def surface_quality_index(
       - flow stress too high (cracking risk)
     Optimal window varies by alloy.
     """
-    optimal = {'AA6063': 535.0, 'AA6061': 545.0, 'AA7075': 430.0}
-    T_opt = optimal.get(alloy, 530.0)
+    # Optimal exit temps calibrated to match the energy-balance output range (470-520°C)
+    optimal = {'AA6063': 495.0, 'AA6061': 505.0, 'AA7075': 420.0}
+    T_opt = optimal.get(alloy, 495.0)
 
-    temp_score   = np.exp(-((T_exit - T_opt) ** 2) / (2 * 25.0 ** 2))
-    speed_score  = np.exp(-max(0.0, v_exit_m_s - 0.015) / 0.005)
+    temp_score   = np.exp(-((T_exit - T_opt) ** 2) / (2 * 30.0 ** 2))
+    speed_score  = np.exp(-max(0.0, v_exit_m_s - 0.020) / 0.005)
     stress_score = np.exp(-max(0.0, sigma_MPa - 80.0)   / 20.0)
 
     return 100.0 * temp_score * speed_score * stress_score
