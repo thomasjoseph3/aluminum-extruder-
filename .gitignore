@@ -1,0 +1,21 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Intermediate epoch checkpoints (keep only best_model.pt and scalers.pkl)
+checkpoints/epoch_*.pt
+
+# Streamlit cache
+.streamlit/
+
+# Mac/Windows junk
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
